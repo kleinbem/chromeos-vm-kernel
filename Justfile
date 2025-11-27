@@ -14,7 +14,7 @@ default:
 setup:
     mkdir -p kernel
     if [ ! -d "kernel/.git" ]; then \
-        echo ">>> Cloning kernel source..."; \
+        echo ">>> Cloning kernel source (this is large)..."; \
         git clone --branch {{branch}} --depth 1 {{repo_url}} kernel; \
     fi
     cd kernel && echo ">>> Checking out commit {{commit_hash}}..."
@@ -36,7 +36,14 @@ config:
 
 # 3. Interactive: Open the menu to enable Waydroid/Binder
 menuconfig:
-    @echo ">>> Opening Menu. Go to: Device Drivers -> Android -> Enable Binder IPC & BinderFS (Built-in)"
+    @echo "=================================================================="
+    @echo " INSTRUCTIONS:"
+    @echo " 1. Go to: Device Drivers -> Android"
+    @echo " 2. Enable: Android Drivers [*]"
+    @echo " 3. Enable: Android Binder IPC Driver [*] (Built-in)"
+    @echo " 4. Enable: Android BinderFS filesystem [*] (Built-in)"
+    @echo "=================================================================="
+    @read -p "Press Enter to launch menuconfig..."
     cd kernel && make {{make_flags}} menuconfig
 
 # 4. Build: Compile the kernel image
@@ -52,19 +59,15 @@ serve:
     @echo "Download URL: http://<YOUR-VM-IP>:8000/kernel/arch/x86/boot/bzImage"
     python3 -m http.server 8000
 
-# 6. Checks: Run lints and validations
-check:
-    @echo ">>> Checking Flake..."
-    nix flake check
-    @echo ">>> Linting build.sh..."
-    shellcheck build.sh
-    @echo ">>> Formatting Check..."
-    nixfmt --check flake.nix
-
-# Helper: Format code automatically
-fmt:
-    nixfmt flake.nix
-    shfmt -w build.sh
+# Helper: Clean build artifacts
+clean:
+    cd kernel && make clean
 
 # Helper: Run the full pipeline (Setup -> Config -> Build)
 all: setup config build
+
+# Helper: Update the pinned commit hash (Manual step required after)
+check-update:
+    @echo ">>> Current Pinned Commit: {{commit_hash}}"
+    @echo ">>> Latest Remote Commit ({{branch}}):"
+    @git ls-remote {{repo_url}} refs/heads/{{branch}} | awk '{print $1}'

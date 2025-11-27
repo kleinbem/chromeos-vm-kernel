@@ -5,7 +5,6 @@ A Nix-based toolkit to build custom kernels for ChromeOS Crostini and Baguette c
 ## How to use
 
 1.  **Enter the Environment:**
-    This installs all dependencies (`clang`, `just`, etc.) automatically.
     ```bash
     nix develop
     ```

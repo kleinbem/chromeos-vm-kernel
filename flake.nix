@@ -1,5 +1,5 @@
 {
-  description = "ChromeOS Kernel Builder Environment (Baguette/Crostini)";
+  description = "Nix development environment for building ChromeOS kernels";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -15,33 +15,37 @@
         devShells.default = pkgs.mkShell {
           name = "chromeos-kernel-builder";
 
-          # Packages required to build the kernel
           nativeBuildInputs = with pkgs; [
+            # The Task Runner
+            just
+
+            # Build Tools
             git
             gnumake
-            ncurses          # Needed for 'menuconfig' interface
+            ncurses          # For menuconfig
             bison
             flex
             openssl
             bc
-            elfutils         # Provides 'libelf'
-            pahole           # Required for BTF generation in newer kernels
-            
-            # Google uses LLVM/Clang for ChromeOS kernels
+            elfutils         # libelf
+            pahole           # BTF generation
+            pkg-config
+
+            # ChromeOS Toolchain (Clang/LLVM)
             llvmPackages_18.clang
             llvmPackages_18.lld
             llvmPackages_18.llvm
-            pkg-config
-
-           shellcheck      # Lints your build.sh
-           shfmt           # Formats your build.sh
-           nixfmt-rfc-style # Formats flake.nix
+            
+            # Linters & Formatters
+            shellcheck
+            shfmt
+            nixfmt-rfc-style
           ];
 
           shellHook = ''
             echo "------------------------------------------------------"
-            echo "🥖 Baguette Kernel Builder Environment"
-            echo "   Run './build.sh' to clone and build."
+            echo "🥖 ChromeOS Kernel Builder (Justfile Mode)"
+            echo "   Run 'just' to see available commands."
             echo "------------------------------------------------------"
           '';
         };
