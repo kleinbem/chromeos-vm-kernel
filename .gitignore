@@ -1,0 +1,16 @@
+# Ignore the massive kernel source directory
+kernel/
+
+# Ignore build artifacts
+*.img
+*.o
+*.ko
+bzImage
+vmlinux
+modules.order
+Module.symvers
+result
+
+# Ignore direnv/nix junk
+.direnv/
+.envrc
