@@ -1,5 +1,6 @@
 # Kernel source and artifacts
 kernel/
+out/
 *.img
 *.o
 *.ko

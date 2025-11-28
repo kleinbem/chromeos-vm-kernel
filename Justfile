@@ -1,73 +1,47 @@
+# Justfile
 set shell := ["bash", "-c"]
 
-# Configuration
-commit_hash := "28eab9a1f61e"
-branch := "chromeos-6.6"
-repo_url := "https://chromium.googlesource.com/chromiumos/third_party/kernel"
-make_flags := "LLVM=1 LLVM_IAS=1"
+# Export variables to sub-shells (and build.sh)
+export BRANCH := "chromeos-6.6"
+export MAKE_FLAGS := "LLVM=1 LLVM_IAS=1"
 
-# Default: List available recipes
+# ------------------------------------------------------------------------------
+# DEFAULT
+# ------------------------------------------------------------------------------
+# List available commands
 default:
     @just --list
 
-# 1. Setup: Clone repo and checkout the exact commit
-setup:
-    mkdir -p kernel
-    if [ ! -d "kernel/.git" ]; then \
-        echo ">>> Cloning kernel source (this is large)..."; \
-        git clone --branch {{branch}} --depth 1 {{repo_url}} kernel; \
-    fi
-    cd kernel && echo ">>> Checking out commit {{commit_hash}}..."
-    # Fetch specific commit if depth=1 missed it
-    cd kernel && (git cat-file -t {{commit_hash}} > /dev/null 2>&1 || git fetch --depth=100 origin {{commit_hash}} || git fetch --unshallow)
-    cd kernel && git checkout {{commit_hash}}
+# ------------------------------------------------------------------------------
+# BUILD TASKS
+# ------------------------------------------------------------------------------
 
-# 2. Config: Extract LIVE config from running system (or fallback to default)
-config:
-    cd kernel && if [ -f /proc/config.gz ]; then \
-        echo "✅ FOUND LIVE CONFIG! Extracting to .config..."; \
-        zcat /proc/config.gz > .config; \
-    else \
-        echo "⚠️  Live config not found. Using default container-vm config..."; \
-        CHROMEOS_KERNEL_FAMILY=termina ./chromeos/scripts/prepareconfig container-vm-x86_64; \
-    fi
-    # Update config for current compiler version
-    cd kernel && make {{make_flags}} olddefconfig
-
-# 3. Interactive: Open the menu to enable Waydroid/Binder
-menuconfig:
-    @echo "=================================================================="
-    @echo " INSTRUCTIONS:"
-    @echo " 1. Go to: Device Drivers -> Android"
-    @echo " 2. Enable: Android Drivers [*]"
-    @echo " 3. Enable: Android Binder IPC Driver [*] (Built-in)"
-    @echo " 4. Enable: Android BinderFS filesystem [*] (Built-in)"
-    @echo "=================================================================="
-    @read -p "Press Enter to launch menuconfig..."
-    cd kernel && make {{make_flags}} menuconfig
-
-# 4. Build: Compile the kernel image
+# 🚀 The main command: Fully automated build (Setup -> Config -> Compile)
 build:
-    echo ">>> Building bzImage (this will take time)..."
-    cd kernel && make -j$(nproc) {{make_flags}} bzImage
-    @echo "✅ Build Complete!"
-    @echo "Kernel location: kernel/arch/x86/boot/bzImage"
+    @./build.sh all
 
-# 5. Serve: Host the file for download (run inside Baguette)
-serve:
-    @echo "Hosting file server on Port 8000..."
-    @echo "Download URL: http://<YOUR-VM-IP>:8000/kernel/arch/x86/boot/bzImage"
-    python3 -m http.server 8000
+# 🔧 Prepare the configuration only (useful to check flags before building)
+config:
+    @./build.sh config
 
-# Helper: Clean build artifacts
+# 🎨 Open the interactive MenuConfig (for manual debugging)
+menuconfig:
+    @./build.sh menuconfig
+
+# ------------------------------------------------------------------------------
+# MAINTENANCE
+# ------------------------------------------------------------------------------
+
+# 🧹 Clean compiled objects (Leaves .config and source) - Safe for incremental
 clean:
-    cd kernel && make clean
+    @./build.sh clean
 
-# Helper: Run the full pipeline (Setup -> Config -> Build)
-all: setup config build
+# ☢️  Deep Clean: Removes the entire kernel directory to start fresh
+nuke:
+    @echo ">>> ☢️  NUKING KERNEL DIRECTORY..."
+    rm -rf kernel out
+    @echo "Done."
 
-# Helper: Update the pinned commit hash (Manual step required after)
-check-update:
-    @echo ">>> Current Pinned Commit: {{commit_hash}}"
-    @echo ">>> Latest Remote Commit ({{branch}}):"
-    @git ls-remote {{repo_url}} refs/heads/{{branch}} | awk '{print $1}'
+# 🔄 Update the Nix Environment (flake.lock)
+update-deps:
+    nix flake update
