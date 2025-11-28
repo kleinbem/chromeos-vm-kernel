@@ -12,6 +12,8 @@
         pkgs = import nixpkgs { inherit system; };
       in
       {
+        formatter = pkgs.nixpkgs-fmt;
+
         devShells.default = pkgs.mkShell {
           name = "chromeos-kernel-builder";
 
@@ -39,15 +41,13 @@
             shellcheck
            ];
 
-          # HERE IS THE TRICK: We export the path to the RAW compiler
-          shellHook = ''
+        shellHook = ''
             export CLANG_UNWRAPPED="${pkgs.llvmPackages_18.clang-unwrapped}/bin/clang"
             export LD_UNWRAPPED="${pkgs.llvmPackages_18.lld}/bin/ld.lld"
             
             echo "------------------------------------------------------"
-            echo "🥖 ChromeOS Kernel Builder (Split-Toolchain)"
-            echo "   * HOSTCC  : System Clang (Wrapped)"
-            echo "   * CC      : ${pkgs.llvmPackages_18.clang-unwrapped.name} (Unwrapped)"
+            echo "🥖 ChromeOS Kernel Builder (Modular)"
+            echo "   Run 'just build' to start."
             echo "------------------------------------------------------"
           '';
         };

@@ -1,131 +1,119 @@
 set shell := ["bash", "-c"]
 
-# Configuration
-commit_hash := "28eab9a1f61e"
-branch := "chromeos-6.6"
-repo_url := "https://chromium.googlesource.com/chromiumos/third_party/kernel"
+# ==============================================================================
+# ⚙️ CONFIGURATION
+# ==============================================================================
 
-# SPLIT TOOLCHAIN FLAGS:
-# HOSTCC = System Clang (finds headers like sys/types.h)
-# CC     = Unwrapped Clang (compiles kernel code without strict wrapper flags)
-# We still keep the 'nuclear' ignore flags just in case the kernel source itself is strict.
+# Repo Settings
+branch := env_var_or_default("KERNEL_BRANCH", "chromeos-6.6")
+repo_url := env_var_or_default("KERNEL_REPO", "https://chromium.googlesource.com/chromiumos/third_party/kernel")
+
+# Modular Features
+# Default features. Can be overridden: just features="waydroid debug" build
+features := "security kvm-guest waydroid gpu optimization"
+
+# Compiler Flags
 ignore_flags := "-Wno-error=unused-command-line-argument -Wno-error=address-of-packed-member -Wno-error=unused-but-set-variable -Wno-error=unused-const-variable"
 
-# Default recipe
+# ==============================================================================
+# 🚀 MAIN TASKS
+# ==============================================================================
+
 default:
     @just --list
 
-# ==============================================================================
-# 🚀 START AND FORGET
-# ==============================================================================
-
-lazy-build:
-    @echo ">>> 📝 Logging output to 'build.log'..."
-    @just _build-internal 2>&1 | tee build.log
-
-_build-internal: setup config build
+build: preflight setup config compile artifacts
     @echo "=================================================================="
-    @echo "☕ DONE. Kernel is ready at: kernel/arch/x86/boot/bzImage"
+    @echo "☕ DONE. Kernel is ready."
     @echo "=================================================================="
 
 # ==============================================================================
-# 🛠️ BUILD STEPS
+# 🛠️ STEPS
 # ==============================================================================
+
+preflight:
+    @echo ">>> 🔍 Checking environment..."
+    @which git > /dev/null || (echo "❌ Git missing"; exit 1)
+    @which clang > /dev/null || (echo "❌ Clang missing"; exit 1)
+    @[ -n "$CLANG_UNWRAPPED" ] || (echo "❌ CLANG_UNWRAPPED not set. Please run 'nix develop' first."; exit 1)
 
 setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p kernel
-    if [ ! -d "kernel/.git" ]; then
-        echo ">>> 📦 Cloning kernel source..."
-        git clone --branch {{branch}} --depth 500 {{repo_url}} kernel
+    @mkdir -p kernel
+    @if [ ! -d "kernel/.git" ]; then \
+        echo ">>> 📦 Cloning kernel source ({{branch}})..."; \
+        git clone --branch {{branch}} --depth 1 {{repo_url}} kernel; \
+    else \
+        echo ">>> 🔄 Updating kernel source..."; \
+        cd kernel && git fetch --depth 1 origin {{branch}} && git checkout FETCH_HEAD; \
     fi
-    cd kernel
-    echo ">>> 🔄 Checking out target commit {{commit_hash}}..."
-    git cat-file -t {{commit_hash}} > /dev/null 2>&1 || git fetch --depth=2000 origin {{branch}}
-    git checkout {{commit_hash}}
 
 config:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd kernel
     
+    KERNEL_ROOT="kernel"
+
     echo ">>> ⚙️  Preparing configuration..."
     if [ -f /proc/config.gz ]; then
-        zcat /proc/config.gz > .config
+        zcat /proc/config.gz > $KERNEL_ROOT/.config
     else
-        CHROMEOS_KERNEL_FAMILY=termina ./chromeos/scripts/prepareconfig container-vm-x86_64
+        make defconfig -C $KERNEL_ROOT
+    fi
+    
+    # ---------------------------------------------------------
+    # ⚠️ CONFLICT CHECK (Remains the same)
+    # ---------------------------------------------------------
+    if [[ "{{features}}" == *"optimization"* ]] && [[ "{{features}}" == *"debug"* ]]; then
+        echo " "
+        echo "🛑 CONFLICT DETECTED: You have requested both 'optimization' and 'debug'."
+        echo "   - 'optimization' disables symbols (fast, small)."
+        echo "   - 'debug' enables symbols (slow, huge)."
+        echo "   -> The last one in the list will win, but this is likely a mistake."
+        echo " "
+        read -p "Press [Enter] to continue anyway, or [Ctrl+C] to abort..." wait_for_user
     fi
 
-    echo ">>> 🛠️  Applying Patches..."
-    # Fix TPM variable
-    if grep -q "int mapping_size;" include/linux/tpm_eventlog.h; then
-        sed -i 's/int[[:space:]]*mapping_size;/int mapping_size __maybe_unused;/' include/linux/tpm_eventlog.h
-    fi
-    # Fix Kconfig newline
-    sed -i -e '$a\' drivers/media/platform/mediatek/vcodec/Kconfig || true
 
-    echo ">>> 🤖 Creating Waydroid Config Fragment..."
-    cat <<EOF > waydroid.frag
-    CONFIG_STAGING=y
-    CONFIG_ANDROID=y
-    CONFIG_ANDROID_BINDER_IPC=y
-    CONFIG_ANDROID_BINDERFS=y
-    CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
-    CONFIG_PSI=y
-    CONFIG_DRM_I915=m
-    CONFIG_DRM_AMDGPU=m
-    # Memory / Linker Fixes
-    CONFIG_DEBUG_INFO=n
-    CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=n
-    CONFIG_DEBUG_INFO_BTF=n
-    CONFIG_WERROR=n
-    EOF
+    echo ">>> 🧩 Applying Features: {{features}}..."
+    for feature in {{features}}; do
+        frag="features/${feature}.config" # Path is correct from project root
+        if [ -f "$frag" ]; then
+            echo "    + Merging $frag"
+            # Command run from root, targets files relative to root
+            ./kernel/scripts/kconfig/merge_config.sh -m -O $KERNEL_ROOT $KERNEL_ROOT/.config "$frag"
+        else
+            echo "    ⚠️ Warning: Feature config '$frag' not found!"
+        fi
+    done
+    
+    # Finalize runs inside the kernel directory
+    cd $KERNEL_ROOT && make LLVM=1 LLVM_IAS=1 olddefconfig > /dev/null
 
-    echo ">>> 🧬 Merging configuration..."
-    ./scripts/kconfig/merge_config.sh -m .config waydroid.frag
-    
-    # Use wrapped clang for config steps to ensure scripts compile
-    make LLVM=1 LLVM_IAS=1 olddefconfig > /dev/null
-
-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd kernel
-    
-    echo ">>> 🔨 Starting Compilation..."
-    echo "    * Host Compiler   : Clang (Wrapped)"
-    echo "    * Kernel Compiler : Clang (Unwrapped)"
-    
-    # THE MAGIC COMMAND
-    # We use the environment variable CLANG_UNWRAPPED from flake.nix
-    # This splits the toolchain so everyone is happy.
-    time make -j$(nproc) \
+compile:
+    @echo ">>> 🔨 Patching & Compiling..."
+    @./scripts/fix_realmode.sh
+    @cd kernel && time make -j$(nproc) \
         LLVM=1 \
         LLVM_IAS=1 \
         CC="$CLANG_UNWRAPPED" \
         HOSTCC=clang \
         LD=ld.lld \
-        WERROR=0 \
         KCFLAGS={{ignore_flags}} \
         KAFLAGS={{ignore_flags}} \
         bzImage
 
-    echo ">>> 📦 Artifact check..."
-    if [ -f arch/x86/boot/bzImage ]; then
-        mkdir -p ../out
-        cp arch/x86/boot/bzImage ../out/bzImage
-        echo "   ✅ Success! File: out/bzImage"
-    else
-        echo "   ❌ Error: bzImage was not created."
-        exit 1
+artifacts:
+    @if [ -f kernel/arch/x86/boot/bzImage ]; then \
+        mkdir -p out; \
+        cp kernel/arch/x86/boot/bzImage out/bzImage; \
+        echo "   ✅ Success! File available at: out/bzImage"; \
+    else \
+        echo "   ❌ Error: bzImage was not created."; \
+        exit 1; \
     fi
-
-serve:
-    python3 -m http.server 8000
 
 clean:
     cd kernel && make clean
 
-check-update:
-    @git ls-remote {{repo_url}} refs/heads/{{branch}} | awk '{print $1}'
+menuconfig:
+    cd kernel && make LLVM=1 LLVM_IAS=1 menuconfig

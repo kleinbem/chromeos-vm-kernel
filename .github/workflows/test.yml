@@ -1,0 +1,10 @@
+name: Test Config Gen
+on: [push]
+jobs:
+  check-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v2
+      - run: nix develop --command just setup config
+      - run: grep "CONFIG_ANDROID=y" kernel/.config
