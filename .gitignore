@@ -9,6 +9,8 @@ vmlinux
 modules.order
 Module.symvers
 result
+build.log
+waydroid.frag
 
 # Environment
 .direnv/

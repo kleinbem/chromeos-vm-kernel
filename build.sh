@@ -6,11 +6,11 @@
 set -euo pipefail
 
 # ==============================================================================
-# CONFIGURATION (Overridable by Justfile)
+# AUTOMATED KERNEL BUILDER (WAYDROID SUPPORT)
 # ==============================================================================
-BRANCH="${BRANCH:-chromeos-6.6}"
-REPO_URL="${REPO_URL:-https://chromium.googlesource.com/chromiumos/third_party/kernel}"
-MAKE_FLAGS="${MAKE_FLAGS:-LLVM=1 LLVM_IAS=1}"
+BRANCH="chromeos-6.6"
+REPO_URL="https://chromium.googlesource.com/chromiumos/third_party/kernel"
+MAKE_FLAGS="LLVM=1 LLVM_IAS=1 WERROR=0"
 OUTPUT_DIR="$(pwd)/out"
 KERNEL_DIR="$(pwd)/kernel"
 
@@ -35,53 +35,54 @@ task_setup() {
 }
 
 task_config() {
-    echo ">>> ⚙️  [Config] Preparing Configuration..."
-    cd "$KERNEL_DIR"
-    
-    # 1. Base Config
-    if [ -f /proc/config.gz ]; then
-        echo "       ✅ Detected running /proc/config.gz"
-        zcat /proc/config.gz > .config
-    else
-        echo "       ⚠️  Live config not found. Using fallback 'container-vm'."
-        if [ -f ../chromeos/scripts/prepareconfig ]; then
-            CHROMEOS_KERNEL_FAMILY=termina ../chromeos/scripts/prepareconfig container-vm-x86_64
-        else
-            echo "       ❌ Error: prepareconfig script not found."
-            exit 1
-        fi
-    fi
-
-    # 2. Sync Old Config
-    make $MAKE_FLAGS olddefconfig > /dev/null
-
-    # 3. Apply Waydroid Patches
-    echo "       🤖 Enabling Waydroid Flags..."
-    ./scripts/config --enable CONFIG_ANDROID
-    ./scripts/config --enable CONFIG_ANDROID_BINDER_IPC
-    ./scripts/config --enable CONFIG_ANDROID_BINDERFS
-    ./scripts/config --enable CONFIG_ASHMEM 
-
-    # 4. Final Sync
-    make $MAKE_FLAGS olddefconfig > /dev/null
-    
-    # 5. Verify
-    if grep -q "CONFIG_ANDROID=y" .config; then
-        echo "       [OK] CONFIG_ANDROID is enabled."
-    else
-        echo "       [!!] WARNING: Waydroid flags might be missing."
-    fi
+    # This is handled by Justfile now, but we keep this as a fallback/helper
+    echo ">>> ⚙️  Config should be run via 'just config'"
 }
 
 task_build() {
     echo ">>> 🔨 [Build] Compiling Kernel (bzImage)..."
     cd "$KERNEL_DIR"
-    # We use 'time' to show duration.
-    time make -j"$(nproc)" $MAKE_FLAGS bzImage
+
+    # -------------------------------------------------------------------------
+    # CRITICAL PATCH: Real Mode Makefile (Fixes 'header.o' / nostdlibinc crash)
+    # -------------------------------------------------------------------------
+    REALMODE_MK="arch/x86/realmode/rm/Makefile"
+    if [ -f "$REALMODE_MK" ]; then
+        echo "       🩹 Patching Real Mode Makefile ($REALMODE_MK)..."
+        # Remove any existing -Werror
+        sed -i 's/-Werror//g' "$REALMODE_MK"
+        
+        # Force append the ignore flag for BOTH C and Assembly (AFLAGS)
+        # We check if we already added it to avoid duplication
+        if ! grep -q "unused-command-line-argument" "$REALMODE_MK"; then
+             echo "KBUILD_CFLAGS += -Wno-error=unused-command-line-argument" >> "$REALMODE_MK"
+             echo "KBUILD_AFLAGS += -Wno-error=unused-command-line-argument" >> "$REALMODE_MK"
+        fi
+    fi
+
+    # -------------------------------------------------------------------------
+    # GLOBAL FLAGS: Disable strictness
+    # -------------------------------------------------------------------------
+    IGNORE_FLAGS="-Wno-error=unused-command-line-argument -Wno-error=address-of-packed-member -Wno-error=unused-but-set-variable -Wno-error=unused-const-variable"
+
+    echo "       🚀 Starting make..."
+    time make -j"$(nproc)" \
+        $MAKE_FLAGS \
+        KCFLAGS="$IGNORE_FLAGS" \
+        KAFLAGS="$IGNORE_FLAGS" \
+        CPPFLAGS="$IGNORE_FLAGS" \
+        KCPPFLAGS="$IGNORE_FLAGS" \
+        bzImage
     
-    echo ">>> 📦 [Artifact] Copying to output..."
-    cp arch/x86/boot/bzImage "$OUTPUT_DIR/bzImage"
-    echo "       Location: $OUTPUT_DIR/bzImage"
+    if [ -f arch/x86/boot/bzImage ]; then
+        echo ">>> 📦 [Artifact] Copying to output..."
+        cp arch/x86/boot/bzImage "$OUTPUT_DIR/bzImage"
+        echo "       Location: $OUTPUT_DIR/bzImage"
+        echo "       ✅ BUILD SUCCESSFUL"
+    else
+        echo "       ❌ Error: bzImage not found at expected location."
+        exit 1
+    fi
 }
 
 task_clean() {
@@ -104,7 +105,7 @@ COMMAND="${1:-all}"
 case "$COMMAND" in
     setup)      task_setup ;;
     config)     task_setup; task_config ;;
-    build)      task_setup; task_config; task_build ;;
+    build)      task_setup; task_build ;; # Skipped config here as it's done in Justfile
     clean)      task_clean ;;
     menuconfig) task_setup; task_menuconfig ;;
     all)        task_setup; task_config; task_build ;;
