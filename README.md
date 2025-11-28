@@ -2,6 +2,9 @@
 
 A Nix-based toolkit to build custom kernels for ChromeOS Crostini and Baguette containers, enabling support for Waydroid (Binder/Ashmem).
 
+## Prerequisites
+* **Share Downloads:** Open the ChromeOS "Files" app, right-click **Downloads**, and select **"Share with Linux"**. This allows the builder to save the kernel directly to your host.
+
 ## How to use
 
 1.  **Enter the Environment:**
@@ -27,12 +30,11 @@ A Nix-based toolkit to build custom kernels for ChromeOS Crostini and Baguette c
     just build
     ```
 
-5.  **Transfer to Host:**
-    Start the file server inside the VM.
+5.  **Deploy:**
+    Copy the kernel directly to your ChromeOS Downloads folder.
     ```bash
-    just serve
+    just deploy
     ```
-    *Open Chrome on your Chromebook and download the link displayed (e.g., `http://<VM-IP>:8000/kernel/arch/x86/boot/bzImage`).*
 
 6.  **Boot (On Host):**
     Open Crosh (`Ctrl+Alt+T`) on your Chromebook and run:
