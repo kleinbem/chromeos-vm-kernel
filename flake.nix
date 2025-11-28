@@ -30,6 +30,7 @@
             elfutils         # libelf
             pahole           # BTF generation
             pkg-config
+            python3
 
             # ChromeOS Toolchain (Clang/LLVM)
             llvmPackages_18.clang
