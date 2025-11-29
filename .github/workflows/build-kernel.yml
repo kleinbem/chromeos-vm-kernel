@@ -1,10 +1,12 @@
 name: Build Kernel
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger from Actions tab
   push:
     branches: [ "main" ]
-    paths-ignore: ['**.md', 'LICENSE']
+    paths-ignore: # Don't burn CPU cycles for docs
+      - '**.md'
+      - 'LICENSE'
 
 jobs:
   build-kernel:
@@ -14,6 +16,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 1. Clean up disk space
+      # The standard runner only has ~14GB. This script deletes Android SDKs, 
+      # .NET, etc., to give us ~70GB for the massive kernel build.
       - name: Free Disk Space
         uses: easimon/maximize-build-disk-space@v1
         with:
@@ -22,34 +27,37 @@ jobs:
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
+          remove-codeql: 'true'
 
-      # 1. Install Nix with built-in caching
+      # 2. Install Nix (FIXED VERSION)
+      # We upgraded to v30 to fix the "set-env" security error you saw.
+      # Added 'github_access_token' so it can pull from the magic GitHub cache.
       - name: Install Nix
         uses: cachix/install-nix-action@v30
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-          # This enables the magic GitHub cache for Nix store paths
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. Restore ccache (The Cache Logic)
+      # 3. Restore Compiler Cache (ccache)
+      # This saves the compiled .o files. If we only change one config flag, 
+      # we don't want to wait 40 mins to rebuild everything.
       - name: Ccache Restore
         uses: actions/cache@v4
         with:
           path: .ccache
-          # Key includes the runner OS and a hash of your config/source state
-          # If 'flake.lock' or 'features' change, the cache invalidates slightly, 
-          # but ccache is robust enough to handle partial hits.
+          # Key changes if we update dependencies (flake.lock) or kernel configs.
           key: kernel-ccache-${{ runner.os }}-${{ hashFiles('flake.lock', 'features/*.config') }}
           restore-keys: |
             kernel-ccache-${{ runner.os }}-
 
-      # 3. Build
+      # 4. Build the Kernel
+      # We limit cache size to 2GB so it doesn't get evicted for being too huge.
       - name: Build Kernel
         run: |
-          # We define the cache size to prevent it from growing infinitely
           nix develop --command bash -c "export CCACHE_MAXSIZE=2G && just build"
 
-      # 4. Save Artifacts
+      # 5. Save the goods
+      # We only keep artifacts for 5 days to stay under the 500MB repo limit.
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
