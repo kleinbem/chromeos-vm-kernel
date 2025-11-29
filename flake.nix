@@ -32,6 +32,7 @@
             python3
             perl
             cpio
+            ccache
             
             # We need the standard clang for the environment
             llvmPackages_18.clang

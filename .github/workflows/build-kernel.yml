@@ -1,0 +1,60 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths-ignore: ['**.md', 'LICENSE']
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: easimon/maximize-build-disk-space@v1
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      # 1. Install Nix with built-in caching
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          # This enables the magic GitHub cache for Nix store paths
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. Restore ccache (The Cache Logic)
+      - name: Ccache Restore
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          # Key includes the runner OS and a hash of your config/source state
+          # If 'flake.lock' or 'features' change, the cache invalidates slightly, 
+          # but ccache is robust enough to handle partial hits.
+          key: kernel-ccache-${{ runner.os }}-${{ hashFiles('flake.lock', 'features/*.config') }}
+          restore-keys: |
+            kernel-ccache-${{ runner.os }}-
+
+      # 3. Build
+      - name: Build Kernel
+        run: |
+          # We define the cache size to prevent it from growing infinitely
+          nix develop --command bash -c "export CCACHE_MAXSIZE=2G && just build"
+
+      # 4. Save Artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromeos-vm-kernel
+          path: |
+            out/bzImage
+            out/modules.tar.gz
+          retention-days: 5

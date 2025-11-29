@@ -86,21 +86,24 @@ config:
         fi
     done
     
-    # Finalize runs inside the kernel directory
-    cd $KERNEL_ROOT && make LLVM=1 LLVM_IAS=1 olddefconfig > /dev/null
+# Define the compiler wrapper
+# If ccache is installed, use it. Otherwise, just use the raw compiler.
+cc_wrapper := shell("command -v ccache >/dev/null && echo 'ccache ' || echo ''")
 
 compile:
     @echo ">>> 🔨 Patching & Compiling..."
     @./scripts/fix_realmode.sh
-    @cd kernel && time make -j$(nproc) \
+    # We explicitly set CCACHE_DIR to a local folder so GitHub can cache it easily
+    @export CCACHE_DIR=$(pwd)/.ccache && \
+     cd kernel && time make -j$(nproc) \
         LLVM=1 \
         LLVM_IAS=1 \
-        CC="$CLANG_UNWRAPPED" \
-        HOSTCC=clang \
+        CC="{{cc_wrapper}}$CLANG_UNWRAPPED" \
+        HOSTCC="{{cc_wrapper}}clang" \
         LD=ld.lld \
         KCFLAGS={{ignore_flags}} \
         KAFLAGS={{ignore_flags}} \
-        bzImage
+        bzImage modules
 
 artifacts:
     @if [ -f kernel/arch/x86/boot/bzImage ]; then \
