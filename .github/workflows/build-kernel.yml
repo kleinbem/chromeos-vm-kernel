@@ -1,10 +1,14 @@
 name: Build Kernel
 
+# 1. CRITICAL: Permissions for Releases
+permissions:
+  contents: write
+
 on:
-  workflow_dispatch: # Allows manual trigger from Actions tab
+  workflow_dispatch:
   push:
     branches: [ "main" ]
-    paths-ignore: # Don't burn CPU cycles for docs
+    paths-ignore:
       - '**.md'
       - 'LICENSE'
 
@@ -16,53 +20,68 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. Clean up disk space
-      # The standard runner only has ~14GB. This script deletes Android SDKs, 
-      # .NET, etc., to give us ~70GB for the massive kernel build.
-      - name: Free Disk Space
-        uses: easimon/maximize-build-disk-space@v1
-        with:
-          root-reserve-mb: 2048
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
+      # 2. REQUIRED: Generate the Date for the Release Body
+      - name: Get Date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      # 2. Install Nix (FIXED VERSION)
-      # We upgraded to v30 to fix the "set-env" security error you saw.
-      # Added 'github_access_token' so it can pull from the magic GitHub cache.
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Install Nix
         uses: cachix/install-nix-action@v30
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. Restore Compiler Cache (ccache)
-      # This saves the compiled .o files. If we only change one config flag, 
-      # we don't want to wait 40 mins to rebuild everything.
+      # 3. OPTIMIZED: Cache Strategy
+      # We add ${{ github.run_id }} to the 'key' so it saves a NEW cache every run.
+      # We use 'restore-keys' to fetch the NEAREST matching cache from previous runs.
       - name: Ccache Restore
         uses: actions/cache@v4
         with:
           path: .ccache
-          # Key changes if we update dependencies (flake.lock) or kernel configs.
-          key: kernel-ccache-${{ runner.os }}-${{ hashFiles('flake.lock', 'features/*.config') }}
+          key: kernel-ccache-${{ runner.os }}-${{ hashFiles('flake.lock', 'features/*.config') }}-${{ github.run_id }}
           restore-keys: |
+            kernel-ccache-${{ runner.os }}-${{ hashFiles('flake.lock', 'features/*.config') }}-
             kernel-ccache-${{ runner.os }}-
 
-      # 4. Build the Kernel
-      # We limit cache size to 2GB so it doesn't get evicted for being too huge.
       - name: Build Kernel
         run: |
           nix develop --command bash -c "export CCACHE_MAXSIZE=2G && just build"
 
-      # 5. Save the goods
-      # We only keep artifacts for 5 days to stay under the 500MB repo limit.
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      # 4. REQUIRED: Move the tag to the current commit
+      - name: Update Nightly Tag
+        uses: richardsimko/update-tag@v1
+        if: github.ref == 'refs/heads/main'
         with:
-          name: chromeos-vm-kernel
-          path: |
+          tag_name: nightly
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish "Latest" Kernel
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: nightly
+          name: "Latest Nightly Build"
+          body: |
+            ### 🥑 Freshly Baked Kernel
+            **Date:** ${{ steps.date.outputs.date }}
+            **Commit:** ${{ github.sha }}
+            
+            This release is automatically updated with the latest changes.
+          files: |
             out/bzImage
             out/modules.tar.gz
-          retention-days: 5
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
